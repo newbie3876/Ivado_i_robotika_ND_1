@@ -1,215 +1,159 @@
-#include <Servo.h>
 #include <LiquidCrystal.h>
+#include <Servo.h>
 
-// Entrance sensor:
-const int entranceTrig = 9;
-const int entranceEcho = 8;
+// LDR jutikliai:
+const int ldr1Pin = A0;
+const int ldr2Pin = A1;
 
-// Parking slot 1:
-const int slot1Trig = 11;
-const int slot1Echo = 10;
+// LED:
+const int led1Pin = 3;
+const int led2Pin = 4;
 
-// Parking slot 2:
-const int slot2Trig = 13;
-const int slot2Echo = 12;
+// Įvažiavimo mygtukas:
+const int buttonPin = 5;
 
-// COMPONENT PINS:
-const int servoPin = 7;
-const int buzzerPin = 2;
+// Buzzer(piezo):
+const int buzzerPin = 6;
 
-const int green1 = 5;
-const int green2 = 3;
+// Servo:
+const int servoPin = 9;
 
-// LCD 16x2:
-LiquidCrystal lcd(A0, A1, A2, A3, A4, A5);
+LiquidCrystal lcd(10, 11, 12, 13, A2, A3); // LCD: RS, E, D4, D5, D6, D7
+Servo gateServo;
 
-Servo gate;
-const int detectionDistance = 20; // Vehicle detection distance in centimeters
+// LDR histerezė:
+const int occupiedThreshold = 300;
+const int freeThreshold = 400;
 
-// Servo angles:
-const int gateOpenAngle = 90;
-const int gateClosedAngle = 0;
+// Servo pasisukimo kampas:
+const int gateClosed = 0;
+const int gateOpen = 90;
 
-// Gate timing:
-const unsigned long minimumOpenTime = 1500;
-const unsigned long maximumOpenTime = 8000;
-
-// LCD welcome message duration:
-const unsigned long welcomeDuration = 2000;
-
-// sistemos būsenos:
-enum GateState {
-  GATE_CLOSED,
-  GATE_OPEN
-};
-
-GateState gateState = GATE_CLOSED;
-
-unsigned long gateOpenedAt = 0; // Time when gate was opened
-bool carHandled = false; // Prevent repeated detection of the same vehicle
-
-// LCD MESSAGE:
-unsigned long messageStartedAt = 0;
-bool welcomeMessageActive = false;
-
-// Remember last LCD content:
-String lastLine1 = "";
-String lastLine2 = "";
-
-// Atstumo matavimai:
-long getDistance(int trigPin, int echoPin) {
-  // Make sure trigger is LOW:
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-
-  // Send 10 microsecond ultrasonic pulse:
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-
-  // Measure echo:
-  long duration = pulseIn(echoPin, HIGH, 30000);
-  // No echo received:
-  if (duration == 0) return 999;
-
-  // Convert microseconds to centimeters:
-  return duration / 58;
-}
-
-// LCD DISPLAY:
-void printLine(int row, String text) {
-  if (text.length() > 16) text = text.substring(0, 16); // limits text to 16 characters
-  while (text.length() < 16) text += " "; // fills remaining characters with spaces
-
-  lcd.setCursor(0, row);
-  lcd.print(text);
-}
-
-void updateLCD(String line1, String line2) {
-  // Update LCD only when text changes:
-  if (line1 != lastLine1 || line2 != lastLine2) {
-    printLine(0, line1);
-    printLine(1, line2);
-
-    lastLine1 = line1;
-    lastLine2 = line2;
-  }
-}
-
-// GATE CONTROL:
-void openGate() {
-  gate.write(gateOpenAngle);
-  gateState = GATE_OPEN;
-  gateOpenedAt = millis();
-}
-
-void closeGate() {
-  gate.write(gateClosedAngle);
-  gateState = GATE_CLOSED;
-}
+// Dabartinė vietų būsena:
+bool occupied1 = false;
+bool occupied2 = false;
 
 void setup() {
-  pinMode(entranceTrig, OUTPUT);
-  pinMode(entranceEcho, INPUT);
+  Serial.begin(9600);
 
-  pinMode(slot1Trig, OUTPUT);
-  pinMode(slot1Echo, INPUT);
-
-  pinMode(slot2Trig, OUTPUT);
-  pinMode(slot2Echo, INPUT);
-
-  pinMode(green1, OUTPUT);
-  pinMode(green2, OUTPUT);
-
+  pinMode(led1Pin, OUTPUT);
+  pinMode(led2Pin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
   pinMode(buzzerPin, OUTPUT);
 
-  gate.attach(servoPin);
-  closeGate();
+  // Servo:
+  gateServo.attach(servoPin);
+  gateServo.write(gateClosed);
 
+  // LCD:
   lcd.begin(16, 2);
-  updateLCD("SMART PARKING", "System Ready");
-  delay(2000);
+  lcd.setCursor(0, 0);
+  lcd.print("SMART PARKING");
+  lcd.setCursor(0, 1);
+  lcd.print("STARTING...");
+
+  delay(1500);
+  lcd.clear();
 }
 
 void loop() {
-  long distance1 = getDistance(slot1Trig, slot1Echo);
-  //Small delay reduces the risk of ultrasonic 
-  // interference between sensors:
-  delay(30);
+  int ldr1 = analogRead(ldr1Pin);
+  int ldr2 = analogRead(ldr2Pin);
 
-  long distance2 = getDistance(slot2Trig, slot2Echo);
-  delay(30);
-
-  long entranceDistance = getDistance(entranceTrig, entranceEcho);
-
-  bool occupied1 = distance1 < detectionDistance;
-  bool occupied2 = distance2 < detectionDistance;
-
-  int freePlaces = 0;
-
-  if (!occupied1) freePlaces++;
-
-  if (!occupied2) freePlaces++;
-
-  digitalWrite(green1, !occupied1);
-  digitalWrite(green2, !occupied2);
-
-  // ENTRANCE DETECTION:
-  bool carDetected = entranceDistance < detectionDistance;
-
-  unsigned long currentTime = millis();
-
-  // WELCOME MESSAGE TIMER:
-  if (welcomeMessageActive) {
-    if (currentTime - messageStartedAt >= welcomeDuration) {
-      welcomeMessageActive = false;
-    }
+  if (ldr1 < occupiedThreshold) {
+    occupied1 = true;
+  }  else if (ldr1 > freeThreshold) {
+    occupied1 = false;
   }
-  
-  // atidaromi vartai:
-  if (gateState == GATE_OPEN) {
-    bool minimumTimePassed = currentTime - gateOpenedAt >= minimumOpenTime;
-    bool maximumTimePassed = currentTime - gateOpenedAt >= maximumOpenTime;
 
-    if (maximumTimePassed ||(minimumTimePassed && !carDetected)) {
-      closeGate();
-      // Gate cycle finished:
-      carHandled = true;
-    }
+  if (ldr2 < occupiedThreshold) {
+    occupied2 = true;
+  } else if (ldr2 > freeThreshold) {
+    occupied2 = false;
+  }
+
+  // LED indikatoriai:
+  digitalWrite(led1Pin, occupied1 ? LOW : HIGH);
+  digitalWrite(led2Pin, occupied2 ? LOW : HIGH);
+
+  // Skaičiuojame laisvas vietas:
+  int freeSpaces = 0;
+
+  if (!occupied1) {
+    freeSpaces++;
+  }
+
+  if (!occupied2) {
+    freeSpaces++;
+  }
+
+  lcd.setCursor(0, 0);
+  lcd.print("SMART PARKING   ");
+  lcd.setCursor(0, 1);
+  lcd.print("FREE: ");
+  lcd.print(freeSpaces);
+  lcd.print("          ");
+
+  // Serial monitor output:
+  Serial.print("LDR1: ");
+  Serial.print(ldr1);
+  Serial.print(occupied1 ? " [UZIMTA]" : " [LAISVA]");
+  Serial.print("   LDR2: ");
+  Serial.print(ldr2);
+  Serial.print(occupied2 ? " [UZIMTA]" : " [LAISVA]");
+  Serial.print("   FREE: ");
+  Serial.println(freeSpaces);
+
+  // Įvažiavimo mygtukas:
+  if (digitalRead(buttonPin) == LOW) {
+    delay(40); 
     
-    // LCD WHILE GATE IS OPEN:
-    if (welcomeMessageActive) {
-      updateLCD("WELCOME!", String("Vacant: ") + freePlaces);
-    } else {
-      updateLCD("GATE OPEN", String("Vacant: ") + freePlaces);
-    }
-  } else {
-    // Reset detection only after the vehicle leaves the entrance:
-    if (!carDetected) carHandled = false;
-    // nėra laisvų vietų:
-    if (freePlaces == 0) {
-      updateLCD("PARKING FULL", "No vacant spaces");
-      // Sound buzzer only once for the detected vehicle:
-      if (carDetected && !carHandled) {
-        tone(buzzerPin, 500, 500);
-        carHandled = true;
+    if (digitalRead(buttonPin) == LOW) {
+      if (freeSpaces > 0) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("WELCOME!");
+        lcd.setCursor(0, 1);
+        lcd.print("GATE OPEN");
+
+        // Trumpas signalas:
+        tone(buzzerPin, 1200, 200);
+        // Atidarome vartus:
+        gateServo.write(gateOpen);
+        delay(3000);
+
+        // Uždarome vartus:
+        gateServo.write(gateClosed);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("GATE CLOSED");
+        delay(1000);
       }
-    } else {
-      // Vehicle detected and this vehicle has not been handled yet:
-      if (carDetected && !carHandled) {
-        updateLCD("WELCOME!", String("Vacant: ") + freePlaces);
-        tone(buzzerPin, 1000, 200); // Short confirmation sound
-        openGate(); // opens gate
-        
-        // Start welcome message timer:
-        welcomeMessageActive = true;
-        messageStartedAt = currentTime;
-        carHandled = true; // prevents repeated opening
-      } else if (!welcomeMessageActive) {
-        updateLCD("VACANT SPACES", String("Available: ") + freePlaces);
+
+      else {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("PARKING FULL!");
+        lcd.setCursor(0, 1);
+        lcd.print("NO FREE SPACE");
+
+        // Perspėjimo signalas:
+        tone(buzzerPin, 500, 300);
+        delay(400);
+        tone(buzzerPin, 500, 300);
+        delay(400);
+        tone(buzzerPin, 500, 300);
+        delay(1500); // Servo NEJUDA
       }
+
+      // Laukiame, kol bus atleistas nuspaustas mygtukas:
+      while (digitalRead(buttonPin) == LOW) {
+        delay(10);
+      }
+
+      lcd.clear();
     }
   }
- 
-  delay(50); // Small delay before next loop
+
+  delay(100);
 }
